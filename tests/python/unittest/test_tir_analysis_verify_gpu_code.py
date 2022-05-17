@@ -17,7 +17,9 @@
 """Test gpu code verifier"""
 import tvm
 from tvm import te
+from tvm import topi
 import tvm.testing
+import tvm.topi.testing
 
 
 def get_verify_pass(valid, **kwargs):
@@ -30,7 +32,7 @@ def get_verify_pass(valid, **kwargs):
 
 @tvm.testing.requires_gpu
 def test_shared_memory():
-    def check_shared_memory(dtype):
+    def check_shared_memory(storage_scope, dtype):
         N = 1024
         M = 128
 
@@ -41,7 +43,7 @@ def test_shared_memory():
         B = te.compute((N,), lambda i: A[i], name="B")
 
         s = te.create_schedule([B.op])
-        AA = s.cache_read(A, "shared", [B])
+        AA = s.cache_read(A, storage_scope, [B])
         o, i = s[B].split(s[B].op.axis[0], M)
         s[AA].compute_at(s[B], o)
         s[B].bind(o, te.thread_axis("blockIdx.x"))
@@ -88,8 +90,9 @@ def test_shared_memory():
                 tvm.build(s, [A, B], target)
             assert valid[0]
 
-    check_shared_memory("float32")
-    check_shared_memory("int8x4")
+    check_shared_memory("shared", "float32")
+    check_shared_memory("shared", "int8x4")
+    check_shared_memory("shared.dyn", "float32")
 
 
 @tvm.testing.requires_gpu
@@ -342,6 +345,34 @@ def test_vectorize():
 
 
 @tvm.testing.requires_gpu
+def test_vectorize_half():
+    N = 1024
+
+    A = te.placeholder((N, N), name="A", dtype="float16")
+    B = te.compute((N, N), lambda i, j: A[i, j])
+
+    s = te.create_schedule([B.op])
+
+    i, j = s[B].op.axis
+
+    s[B].bind(i, te.thread_axis("blockIdx.x"))
+    jo, ji = s[B].split(j, factor=8)
+    s[B].bind(jo, te.thread_axis("threadIdx.x"))
+    s[B].vectorize(ji)
+
+    for target in ["opencl", "cuda"]:
+        if not tvm.testing.device_enabled(target):
+            continue
+
+        valid = [None]
+        with tvm.transform.PassContext(
+            config={"tir.add_lower_pass": [(2, get_verify_pass(valid, max_vector_bytes=16))]}
+        ):
+            tvm.lower(s, [A, B])
+        assert valid[0]
+
+
+@tvm.testing.requires_gpu
 def test_vthread():
     N = 1024
 
@@ -373,6 +404,33 @@ def test_vthread():
             assert not valid[0]
 
 
+@tvm.testing.requires_gpu
+def test_redundant_kernels():
+    dtype = "float32"
+    A = te.placeholder(shape=(1,), name="A", dtype=dtype)
+    B = te.placeholder(shape=(1,), name="B", dtype=dtype)
+    C = te.placeholder(shape=(1,), name="C", dtype=dtype)
+    D = topi.less(A, C)
+    E = topi.less(B, C)
+    F = topi.logical_or(D, E)
+    G = topi.identity(F)
+
+    for target in ["opencl", "cuda"]:
+        if not tvm.testing.device_enabled(target):
+            continue
+        print("Running on target: %s" % target)
+        valid = [None]
+
+        with tvm.target.Target(target):
+            s = tvm.topi.testing.get_reduce_schedule(target)(G)
+
+        with tvm.transform.PassContext(
+            config={"tir.add_lower_pass": [(2, get_verify_pass(valid, max_kernels=1))]}
+        ):
+            tvm.build(s, [A, B, C, G], target)
+        assert valid[0]
+
+
 if __name__ == "__main__":
     test_local_memory()
     test_shared_memory()
@@ -380,4 +438,6 @@ if __name__ == "__main__":
     test_multiple_kernels()
     test_wrong_bind()
     test_vectorize()
+    test_vectorize_half()
     test_vthread()
+    test_redundant_kernels()

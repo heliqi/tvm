@@ -46,6 +46,7 @@ class CodeGenCUDA final : public CodeGenC {
   }
   // override behavior
   void PrintFuncPrefix() final;
+  void PrintExtraAttrs(const PrimFunc& f) final;
   void VisitStmt_(const ForNode* op) final;
   void PrintStorageSync(const CallNode* op) final;
   void PrintStorageScope(const std::string& scope, std::ostream& os) final;  // NOLINT(*)
@@ -75,7 +76,8 @@ class CodeGenCUDA final : public CodeGenC {
 
  private:
   // Handle volatile loads
-  void HandleVolatileLoads(const std::string& value, const LoadNode* op, std::ostream& os) final;
+  void HandleVolatileLoads(const std::string& value, const BufferLoadNode* op,
+                           std::ostream& os) final;
 
   // Whether scope such as "__shared__" or "__constant__"  is part of type.
   bool IsScopePartOfType() const final { return false; }

@@ -31,7 +31,7 @@
 // NOTE: dmlc/base.h contains some declarations that are incompatible with some C embedded
 // toolchains. Just pull the bits we need for this file.
 #define DMLC_CMAKE_LITTLE_ENDIAN DMLC_IO_USE_LITTLE_ENDIAN
-#define DMLC_LITTLE_ENDIAN true
+#define DMLC_LITTLE_ENDIAN 1
 #include <tvm/runtime/c_runtime_api.h>
 #include <tvm/runtime/crt/crt.h>
 #include <tvm/runtime/crt/logging.h>
@@ -192,8 +192,6 @@ class MicroRPCServer {
 }  // namespace micro_rpc
 }  // namespace runtime
 }  // namespace tvm
-
-void* operator new[](size_t count, void* ptr) noexcept { return ptr; }
 
 extern "C" {
 

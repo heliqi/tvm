@@ -57,7 +57,7 @@ def uniform(target, dev, gen, low, high, size, dtype):
     out_gen = tvm.nd.array(np.zeros(gen.shape, dtype="uint64"))
     rands = tvm.nd.array(np.zeros(size, dtype=dtype))
     f(tvm.nd.array(gen), tvm.nd.array(low), tvm.nd.array(high), out_gen, rands)
-    return out_gen.asnumpy(), rands.asnumpy()
+    return out_gen.numpy(), rands.asnumpy()
 
 
 @tvm.testing.parametrize_targets
@@ -120,14 +120,14 @@ def test_threefry_generate(target, dev):
 
     # test enough generates to go over generate limit
     gen = np.array(
-        [0, 0, 0, 0, 0, 0, 0, 2 ** 64 - 2, 1 << 63, 0], dtype="uint64"
+        [0, 0, 0, 0, 0, 0, 0, 2**64 - 2, 1 << 63, 0], dtype="uint64"
     )  # make counter large
     a, rands = threefry_generate(target, dev, gen, (2048,))
     assert gen[4] != a[4], "Overflow of counter should trigger path change"
     assert a[7] == 2048, "Overflow of counter should still update counter"
 
     # check generate with path at length limit
-    gen = np.array([0, 0, 0, 0, 0, 0, 0, 2 ** 64 - 2, 0, 0], dtype="uint64")  # make counter large
+    gen = np.array([0, 0, 0, 0, 0, 0, 0, 2**64 - 2, 0, 0], dtype="uint64")  # make counter large
     a, rands = threefry_generate(target, dev, gen, (2048,))
     assert (
         gen[0:4] != a[0:4]
@@ -143,7 +143,7 @@ def test_threefry_wrapping(target, dev):
 
 @tvm.testing.parametrize_targets
 def test_uniform(target, dev):
-    gen = tvm.relay.random.threefry_key(0).data.asnumpy()
+    gen = tvm.relay.random.threefry_key(0).data.numpy()
     m = 1024
     n = 1024
     dtypes = ["float32", "float64"]

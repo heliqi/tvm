@@ -122,7 +122,7 @@ void VulkanDeviceAPI::GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) 
       break;
     }
     case kDeviceName:
-      *rv = prop.device_name;
+      *rv = std::string(prop.device_name);
       break;
 
     case kMaxClockRate:
@@ -236,8 +236,19 @@ void VulkanDeviceAPI::GetTargetProperty(Device dev, const std::string& property,
   if (property == "max_shared_memory_per_block") {
     *rv = int64_t(prop.max_shared_memory_per_block);
   }
+
+  if (property == "supports_integer_dot_product") {
+    *rv = prop.supports_integer_dot_product;
+  }
+
   if (property == "device_name") {
-    *rv = String(prop.device_name);
+    *rv = prop.device_name;
+  }
+  if (property == "device_type") {
+    *rv = prop.device_type;
+  }
+  if (property == "driver_name") {
+    *rv = prop.driver_name;
   }
   if (property == "driver_version") {
     *rv = int64_t(prop.driver_version);
@@ -356,6 +367,7 @@ void VulkanDeviceAPI::CopyDataFromTo(const void* from, size_t from_offset, void*
                       &copy_info);
     });
     stream.Synchronize();
+    stream.ProfilerReset();
     if (!device.coherent_staging) {
       VkMappedMemoryRange mrange;
       mrange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
@@ -402,6 +414,8 @@ void VulkanDeviceAPI::CopyDataFromTo(const void* from, size_t from_offset, void*
       vkCmdCopyBuffer(state->cmd_buffer_, staging_buffer.vk_buf.buffer, to_buf->buffer, 1,
                       &copy_info);
     });
+
+    stream.ProfilerReady();
     // TODO(tulloch): should we instead make the staging buffer a property of the
     // Stream? This would allow us to elide synchronizations here.
     stream.Synchronize();

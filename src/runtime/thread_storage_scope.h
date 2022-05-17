@@ -24,6 +24,7 @@
 #ifndef TVM_RUNTIME_THREAD_STORAGE_SCOPE_H_
 #define TVM_RUNTIME_THREAD_STORAGE_SCOPE_H_
 
+#include <tvm/runtime/metadata.h>
 #include <tvm/runtime/packed_func.h>
 
 #include <string>
@@ -59,6 +60,8 @@ enum class StorageRank {
   kWMMAMatrixB = 5,
   /*! \brief wmma scope memory of accumulator */
   kWMMAAccumulator = 6,
+  /*! \brief global scope texture memory */
+  kTexture = 7,
 };
 
 /*!
@@ -108,6 +111,8 @@ struct StorageScope {
         return "wmma.matrix_b" + tag;
       case StorageRank::kWMMAAccumulator:
         return "wmma.accumulator" + tag;
+      case StorageRank::kTexture:
+        return "texture" + tag;
       default:
         LOG(FATAL) << "unknown storage scope";
         return "";
@@ -143,6 +148,9 @@ struct StorageScope {
     } else if (s.compare(0, 16, "wmma.accumulator") == 0) {
       r.rank = StorageRank::kWMMAAccumulator;
       r.tag = s.substr(16, std::string::npos);
+    } else if (s.compare(0, 7, "texture") == 0) {
+      r.rank = StorageRank::kTexture;
+      r.tag = s.substr(7, std::string::npos);
     } else {
       LOG(FATAL) << "unknown storage scope " << s;
     }
@@ -163,7 +171,7 @@ struct ThreadScope {
    */
   static ThreadScope Create(const std::string& s) {
     ThreadScope r;
-    if (s == "vthread" || s == "cthread") {
+    if (s.compare(0, 7, "vthread") == 0 || s == "cthread") {
       // virtual thread at the same level as local
       r.rank = 1;
       r.dim_index = -1;
@@ -205,7 +213,7 @@ class LaunchParamConfig {
     std::vector<bool> filled(6, false);
     for (size_t i = 0; i < launch_param_tags.size(); ++i) {
       const std::string& tag = launch_param_tags[i];
-      if (tag == kUseDynamicSharedMemoryTag) {
+      if (tag == launch_param::kUseDynamicSharedMemoryTag) {
         ICHECK_EQ(i, launch_param_tags.size() - 1)
             << "kUseDynamicSharedMemoryTag should be the last tag in launch_param_tags.";
         use_dyn_shared_memory_ = true;

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,8 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-set -e
-set -u
+set -euxo pipefail
 
 # Python is required by apps/bundle_deploy
 source tests/scripts/setup-pytest-env.sh
@@ -30,22 +29,25 @@ export VTA_HW_PATH=`pwd`/3rdparty/vta-hw
 export TVM_BIND_THREADS=0
 export OMP_NUM_THREADS=1
 
-# Remove existing testcases
-rm -f build/*_test
+# Build cpptest suite
+python3 tests/scripts/task_build.py \
+    --sccache-bucket tvm-sccache-prod \
+    --cmake-target cpptest
 
-make cpptest -j2
+# crttest requires USE_MICRO to be enabled, which is currently the case
+# with all CI configs
+pushd build
+ninja crttest
+popd
 
-# "make crttest" requires USE_MICRO to be enabled, which is not always the case.
-if grep crttest build/Makefile > /dev/null; then
-    make crttest  # NOTE: don't parallelize, due to issue with build deps.
-fi
 
-for test in build/*_test; do
-    ./$test
-done
+pushd build
+ctest --gtest_death_test_style=threadsafe
+popd
 
 # Test MISRA-C runtime
-cd apps/bundle_deploy
+pushd apps/bundle_deploy
 rm -rf build
 make test_dynamic test_static
-cd ../..
+popd
+

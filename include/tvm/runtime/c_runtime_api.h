@@ -66,7 +66,7 @@
 #endif
 
 // TVM version
-#define TVM_VERSION "0.8.dev0"
+#define TVM_VERSION "0.9.dev0"
 
 // TVM Runtime is DLPack compatible.
 #include <dlpack/dlpack.h>
@@ -76,6 +76,18 @@ extern "C" {
 #endif
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <sys/types.h>
+
+#if defined(_MSC_VER)
+#if defined(_WIN64)
+typedef int64_t tvm_ssize_t;
+#else
+typedef int32_t tvm_ssize_t;
+#endif
+#else
+typedef ssize_t tvm_ssize_t;
+#endif
 
 /*! \brief type of array index. */
 typedef int64_t tvm_index_t;
@@ -298,7 +310,7 @@ TVM_DLL int TVMCbArgToReturn(TVMValue* value, int* code);
  * \param type_codes The type codes of the arguments
  * \param num_args Number of arguments.
  * \param ret The return value handle.
- * \param resource_handle The handle additional resouce handle from fron-end.
+ * \param resource_handle The handle additional resouce handle from front-end.
  * \return 0 if success, -1 if failure happens, set error via TVMAPISetLastError.
  * \sa TVMCFuncSetReturn
  */
@@ -307,7 +319,7 @@ typedef int (*TVMPackedCFunc)(TVMValue* args, int* type_codes, int num_args, TVM
 
 /*!
  * \brief C callback to free the resource handle in C packed function.
- * \param resource_handle The handle additional resouce handle from fron-end.
+ * \param resource_handle The handle additional resouce handle from front-end.
  */
 typedef void (*TVMPackedCFuncFinalizer)(void* resource_handle);
 
@@ -519,6 +531,14 @@ TVM_DLL int TVMObjectGetTypeIndex(TVMObjectHandle obj, unsigned* out_tindex);
  * \return 0 when success, nonzero when failure happens
  */
 TVM_DLL int TVMObjectTypeKey2Index(const char* type_key, unsigned* out_tindex);
+
+/*!
+ * \brief Convert type index to type key.
+ * \param tindex The type index.
+ * \param out_type_key The output type key.
+ * \return 0 when success, nonzero when failure happens
+ */
+TVM_DLL int TVMObjectTypeIndex2Key(unsigned tindex, char** out_type_key);
 
 /*!
  * \brief Increase the reference count of an object.

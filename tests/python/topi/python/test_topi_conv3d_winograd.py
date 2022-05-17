@@ -90,7 +90,7 @@ def verify_conv3d_ncdhw(
         fcompute, fschedule = tvm.topi.testing.dispatch(device, _conv3d_ncdhw_implement)
         with tvm.target.Target(device):
             C = fcompute(
-                A, W, (stride, stride, stride), padding, (dilation, dilation, dilation), dtype
+                A, W, (stride, stride, stride), padding, (dilation, dilation, dilation), 1, dtype
             )
             if add_bias:
                 C = topi.add(C, bias)
@@ -138,7 +138,7 @@ def verify_conv3d_ncdhw(
                 ),
             )
             func(a, w, c)
-        tvm.testing.assert_allclose(c.numpy(), c_np, rtol=1e-4)
+        tvm.testing.assert_allclose(c.numpy(), c_np, rtol=1e-4, atol=1e-6)
 
     for device in ["cuda"]:
         with autotvm.tophub.context(device):  # load tophub pre-tuned parameters

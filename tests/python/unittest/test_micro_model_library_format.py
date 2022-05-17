@@ -18,7 +18,6 @@
 import datetime
 import json
 import os
-import sys
 import tarfile
 
 import numpy
@@ -26,7 +25,8 @@ import pytest
 
 import tvm
 import tvm.relay
-from tvm.relay.backend import executor_factory
+from tvm.relay.backend import Executor, Runtime
+from tvm.relay.testing import byoc
 import tvm.runtime.module
 import tvm.testing
 from tvm.contrib import utils
@@ -42,7 +42,13 @@ def test_export_operator_model_library_format():
         B = tvm.te.placeholder((1,), dtype="int8")
         C = tvm.te.compute(A.shape, lambda i: A[i] + B[0], name="C")
         sched = tvm.te.create_schedule(C.op)
-        mod = tvm.build(sched, [A, B, C], tvm.target.Target(target, target), name="add")
+        mod = tvm.build(
+            sched,
+            [A, B, C],
+            tvm.target.Target(target, target),
+            runtime=Runtime("crt", {"system-lib": True}),
+            name="add",
+        )
 
     temp_dir = utils.tempdir()
     mlf_tar_path = temp_dir.relpath("lib.tar")
@@ -81,7 +87,7 @@ def test_export_operator_model_library_format():
 
     assert (
         len(mod.ir_module_by_target) == 1
-    ), f"expect 1 ir_model_by_target: {ir_module_by_target!r}"
+    ), f"expect 1 ir_model_by_target: {mod.ir_module_by_target!r}"
     for target, ir_mod in mod.ir_module_by_target.items():
         assert int(tvm.runtime.ndarray.device(str(target)).device_type) == 1
         with open(os.path.join(extract_dir, "src", "tir-1.txt")) as tir_f:
@@ -102,20 +108,22 @@ def validate_graph_json(extract_dir, factory):
 
 @tvm.testing.requires_micro
 @pytest.mark.parametrize(
-    "executor,target,should_generate_interface",
+    "executor,runtime,should_generate_interface,json_constants_size_bytes",
     [
-        ("graph", tvm.target.target.micro("host"), False),
-        ("aot", tvm.target.target.micro("host", options="-executor=aot"), False),
+        (Executor("graph"), Runtime("crt", {"system-lib": True}), False, 8),
+        (Executor("aot", {"link-params": True}), Runtime("crt"), False, 0),
         (
-            "aot",
-            tvm.target.target.micro(
-                "host", options="-executor=aot --unpacked-api=1 --interface-api=c"
-            ),
+            Executor("aot", {"unpacked-api": True, "interface-api": "c"}),
+            Runtime("crt"),
             True,
+            0,
         ),
     ],
 )
-def test_export_model_library_format_c(executor, target, should_generate_interface):
+def test_export_model_library_format_c(
+    executor, runtime, should_generate_interface, json_constants_size_bytes
+):
+    target = tvm.target.target.micro("host")
     with utils.TempDirectory.set_keep_for_debug(True):
         with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
             relay_mod = tvm.parser.fromtext(
@@ -129,7 +137,8 @@ def test_export_model_library_format_c(executor, target, should_generate_interfa
             factory = tvm.relay.build(
                 relay_mod,
                 target,
-                target_host=target,
+                executor=executor,
+                runtime=runtime,
                 mod_name="add",
                 params={"c": numpy.array([[2.0, 4.0]], dtype="float32")},
             )
@@ -154,7 +163,7 @@ def test_export_model_library_format_c(executor, target, should_generate_interfa
             )
             assert (datetime.datetime.now() - export_datetime) < datetime.timedelta(seconds=60 * 5)
             assert metadata["target"] == {"1": str(target)}
-            if executor == "graph":
+            if str(executor) == "graph":
                 assert metadata["memory"]["sids"] == [
                     {"storage_id": 0, "size_bytes": 2, "input_binding": "a"},
                     {"storage_id": 1, "size_bytes": 8, "input_binding": "b"},
@@ -163,7 +172,7 @@ def test_export_model_library_format_c(executor, target, should_generate_interfa
                 ]
             assert metadata["memory"]["functions"]["main"] == [
                 {
-                    "constants_size_bytes": 8,
+                    "constants_size_bytes": json_constants_size_bytes,
                     "device": 1,
                     "io_size_bytes": 18,
                     "workspace_size_bytes": 0,
@@ -183,7 +192,7 @@ def test_export_model_library_format_c(executor, target, should_generate_interfa
             os.path.join(extract_dir, "codegen", "host", "include", "tvmgen_add.h")
         )
 
-        if executor == "graph":
+        if str(executor) == "graph":
             validate_graph_json(extract_dir, factory)
 
         with open(os.path.join(extract_dir, "src", "relay.txt")) as relay_f:
@@ -191,7 +200,10 @@ def test_export_model_library_format_c(executor, target, should_generate_interfa
 
         with open(os.path.join(extract_dir, "parameters", "add.params"), "rb") as params_f:
             params = tvm.relay.load_param_dict(params_f.read())
-            assert "p0" in params
+            if json_constants_size_bytes != 0:
+                assert "p0" in params
+            else:
+                assert len(params) == 0
 
 
 @tvm.testing.requires_micro
@@ -212,7 +224,7 @@ def test_export_model_library_format_llvm():
             factory = tvm.relay.build(
                 relay_mod,
                 target,
-                target_host=target,
+                runtime=Runtime("crt", {"system-lib": True}),
                 mod_name="add",
                 params={"c": numpy.array([[2.0, 4.0]], dtype="float32")},
             )
@@ -273,10 +285,11 @@ def test_export_model_library_format_llvm():
 
 @tvm.testing.requires_micro
 @pytest.mark.parametrize(
-    "target",
-    [tvm.target.target.micro("host"), tvm.target.target.micro("host", options="-executor=aot")],
+    "executor,runtime",
+    [(Executor("graph"), Runtime("crt", {"system-lib": True})), (Executor("aot"), Runtime("crt"))],
 )
-def test_export_model_library_format_workspace(target):
+def test_export_model_library_format_workspace(executor, runtime):
+    target = tvm.target.target.micro("host")
     with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
         relay_mod = tvm.parser.fromtext(
             """
@@ -290,7 +303,13 @@ def test_export_model_library_format_workspace(target):
             }
             """
         )
-        factory = tvm.relay.build(relay_mod, target, target_host=target, mod_name="qnn_conv2d")
+        factory = tvm.relay.build(
+            relay_mod,
+            target,
+            executor=executor,
+            runtime=runtime,
+            mod_name="qnn_conv2d",
+        )
 
     temp_dir = utils.tempdir()
     mlf_tar_path = temp_dir.relpath("lib.tar")
@@ -345,5 +364,71 @@ def test_export_non_dso_exportable():
         )
 
 
+@tvm.testing.requires_micro
+def test_export_byoc_c_module():
+    """Test BYOC flow when it produces DSO-exportable modules.
+
+    NOTE the general BYOC flow is not fully supported by Model Library Format right now.
+    """
+    x = tvm.relay.var("x", shape=(10, 10))
+    w0 = tvm.relay.var("w0", shape=(10, 10))
+    w1 = tvm.relay.var("w1", shape=(10, 10))
+    w2 = tvm.relay.var("w2", shape=(10, 10))
+    w3 = tvm.relay.var("w3", shape=(10, 10))
+    w4 = tvm.relay.var("w4", shape=(10, 10))
+    w5 = tvm.relay.var("w5", shape=(10, 10))
+    w6 = tvm.relay.var("w6", shape=(10, 10))
+    w7 = tvm.relay.var("w7", shape=(10, 10))
+
+    # C compiler
+    z0 = tvm.relay.add(x, w0)
+    p0 = tvm.relay.subtract(z0, w1)
+    q0 = tvm.relay.multiply(p0, w2)
+
+    z1 = tvm.relay.add(x, w3)
+    p1 = tvm.relay.subtract(z1, w4)
+    q1 = tvm.relay.multiply(p1, w5)
+
+    # Other parts on TVM
+    z2 = tvm.relay.add(x, w6)
+    q2 = tvm.relay.subtract(z2, w7)
+
+    r = tvm.relay.concatenate((q0, q1, q2), axis=0)
+    f = tvm.relay.Function([x, w0, w1, w2, w3, w4, w5, w6, w7], r)
+    mod = tvm.IRModule()
+    ann = byoc.CcompilerAnnotator()
+    mod["main"] = ann.visit(f)
+    mod = tvm.relay.transform.PartitionGraph("mod_name")(mod)
+    mod = tvm.relay.transform.InferType()(mod)
+
+    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
+        factory = tvm.relay.build(mod, tvm.target.target.micro("host"), runtime=Runtime("crt"))
+
+    temp_dir = utils.tempdir()
+    mlf_tar_path = temp_dir.relpath("lib.tar")
+
+    from tvm import micro
+
+    micro.export_model_library_format(factory, mlf_tar_path)
+
+    with tarfile.open(mlf_tar_path, "r:*") as tf:
+        tar_members = [ti.name for ti in tf.getmembers()]
+        print("tar members", tar_members)
+        assert "./metadata.json" in tar_members
+        with tf.extractfile("./metadata.json") as f:
+            metadata = json.load(f)
+        main_md = metadata["memory"]["functions"]["main"]
+        assert main_md == [
+            {
+                "constants_size_bytes": 0,
+                "device": 1,
+                "io_size_bytes": 4800,
+                "workspace_size_bytes": 800,
+            }
+        ]
+
+
 if __name__ == "__main__":
+    import sys
+
     sys.exit(pytest.main([__file__] + sys.argv[1:]))
